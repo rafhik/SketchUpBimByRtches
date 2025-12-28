@@ -1148,89 +1148,96 @@
     </footer>
     </main>
     <script>
-(() => {
-  "use strict";
+    (() => {
+    "use strict";
 
-  // Ajuste principal: número máximo de vídeos cargados simultáneamente.
-  // Valores típicos: 1 o 2 si se quiere máxima estabilidad, 3 si se admite más carga.
-  const MAX_ACTIVE_YT_IFRAMES = 2;
+    const MAX_ACTIVE_YT_IFRAMES = 2;
 
-  // Cola FIFO para apagar los más antiguos cuando se supere el máximo.
-  const activeQueue = [];
+    // Cola FIFO de iframes que están actualmente cargados (src real).
+    const activeQueue = [];
 
-  function isLoaded(iframe) {
-    return iframe.dataset.loaded === "1";
-  }
-
-  function markLoaded(iframe) {
-    iframe.dataset.loaded = "1";
-  }
-
-  function loadIframe(iframe) {
-    if (isLoaded(iframe)) return;
-
-    const realSrc = iframe.getAttribute("data-src");
-    if (!realSrc) return;
-
-    iframe.setAttribute("src", realSrc);
-    markLoaded(iframe);
-
-    activeQueue.push(iframe);
-    enforceLimit();
-  }
-
-  function unloadIframe(iframe) {
-    // Solo apagar si realmente estaba cargado.
-    if (!isLoaded(iframe)) return;
-
-    iframe.setAttribute("src", "about:blank");
-    // Se mantiene dataset.loaded para que NO se vuelva a cargar automáticamente sin intención.
-    // Si se prefiere permitir recarga automática, se puede borrar esta marca.
-    // iframe.dataset.loaded = "0";
-  }
-
-  function enforceLimit() {
-    // Se eliminan referencias muertas.
-    for (let i = activeQueue.length - 1; i >= 0; i--) {
-      const f = activeQueue[i];
-      if (!f || !document.contains(f)) activeQueue.splice(i, 1);
+    function isLoaded(iframe) {
+        return iframe.dataset.loaded === "1";
     }
 
-    // Mientras haya más de MAX, se apagan los más antiguos.
-    while (activeQueue.length > MAX_ACTIVE_YT_IFRAMES) {
-      const oldest = activeQueue.shift();
-      if (oldest) unloadIframe(oldest);
+    function setLoaded(iframe, value) {
+        iframe.dataset.loaded = value ? "1" : "0";
     }
-  }
 
-  // Observa cuándo un iframe entra en pantalla.
-  const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const iframe = entry.target;
-      loadIframe(iframe);
+    function loadIframe(iframe) {
+        if (isLoaded(iframe)) return;
+
+        const realSrc = iframe.getAttribute("data-src");
+        if (!realSrc) return;
+
+        iframe.setAttribute("src", realSrc);
+        setLoaded(iframe, true);
+
+        // Evitar duplicados en la cola
+        const idx = activeQueue.indexOf(iframe);
+        if (idx >= 0) activeQueue.splice(idx, 1);
+
+        activeQueue.push(iframe);
+        enforceLimit();
     }
-  }, {
-    root: null,
-    threshold: 0.15,
-    rootMargin: "200px 0px 200px 0px"
-  });
 
-  // Inicialización: todos los iframes gestionados deben tener data-src.
-  document.querySelectorAll("iframe.yt-embed[data-src]").forEach((iframe) => {
-    // Garantía de estado inicial.
-    if (!iframe.getAttribute("src")) iframe.setAttribute("src", "about:blank");
-    observer.observe(iframe);
-  });
+    function unloadIframe(iframe) {
+        if (!isLoaded(iframe)) return;
 
-  // Reforzar liberación de recursos cuando se cambia de pestaña del navegador.
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      enforceLimit();
+        // Descargar el reproductor.
+        iframe.setAttribute("src", "about:blank");
+
+        // Clave para que reaparezca al volver: marcar como NO cargado.
+        setLoaded(iframe, false);
+
+        const idx = activeQueue.indexOf(iframe);
+        if (idx >= 0) activeQueue.splice(idx, 1);
     }
-  });
-})();
+
+    function enforceLimit() {
+        // Limpieza de referencias huérfanas
+        for (let i = activeQueue.length - 1; i >= 0; i--) {
+        const f = activeQueue[i];
+        if (!f || !document.contains(f)) activeQueue.splice(i, 1);
+        }
+
+        while (activeQueue.length > MAX_ACTIVE_YT_IFRAMES) {
+        const oldest = activeQueue.shift();
+        if (oldest) unloadIframe(oldest);
+        }
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+        const iframe = entry.target;
+
+        if (entry.isIntersecting) {
+            loadIframe(iframe);
+        } else {
+            // Opcional, pero recomendado si hay muchos vídeos: apagar al salir de pantalla.
+            unloadIframe(iframe);
+        }
+        }
+    }, {
+        threshold: 0.15,
+        rootMargin: "200px 0px 200px 0px"
+    });
+
+    document.querySelectorAll("iframe.yt-embed[data-src]").forEach((iframe) => {
+        // Estado inicial
+        if (!iframe.getAttribute("src")) iframe.setAttribute("src", "about:blank");
+        if (iframe.dataset.loaded !== "0" && iframe.dataset.loaded !== "1") setLoaded(iframe, false);
+
+        observer.observe(iframe);
+    });
+
+    // Cuando se vuelve a la pestaña, se reevalúa el límite.
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) enforceLimit();
+    });
+    })();
 </script>
+
 
     </body>
     </html>
